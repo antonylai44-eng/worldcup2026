@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>World Cup Prediction Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow" data-i18n="eyebrow">2026 FIFA World Cup</p>
+          <h1 data-i18n="heroTitle">Prediction Dashboard</h1>
+          <p class="hero-subtitle" data-i18n="heroSubtitle">Live tables, knockout paths, match probabilities, and champion outlook in one matchday view.</p>
+        </div>
+        <div class="status-box">
+          <span id="modeLabel">Loading</span>
+          <strong id="refreshLabel">Auto refresh: 15s</strong>
+          <div class="language-toggle" aria-label="Language">
+            <button id="langEn" type="button">EN</button>
+            <button id="langZh" type="button">繁</button>
+          </div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="trophy-shape"></div>
+          <div class="ball-shape">
+            <span></span>
+          </div>
+        </div>
+      </header>
+
+      <section class="summary-strip">
+        <div class="stat-card stat-time">
+          <span data-i18n="lastUpdate">Last update</span>
+          <strong id="updatedAt">-</strong>
+        </div>
+        <div class="stat-card stat-groups">
+          <span data-i18n="groups">Groups</span>
+          <strong id="groupCount">-</strong>
+        </div>
+        <div class="stat-card stat-rounds">
+          <span data-i18n="knockoutRounds">Knockout rounds</span>
+          <strong id="roundCount">-</strong>
+        </div>
+        <div class="stat-card stat-forecast">
+          <span data-i18n="forecastMatches">Forecast matches</span>
+          <strong id="forecastCount">-</strong>
+        </div>
+      </section>
+
+      <p id="message" class="message"></p>
+
+      <div class="layout">
+        <section class="panel standings-panel">
+          <div class="panel-title">
+            <div>
+              <span class="section-kicker" data-i18n="groupStage">Group Stage</span>
+              <h2 data-i18n="actualGroupTables">Actual Group Tables</h2>
+            </div>
+            <div class="control-row">
+              <label>
+                <span data-i18n="show">Show</span>
+                <select id="groupFilter">
+                  <option value="all">All groups</option>
+                </select>
+              </label>
+              <button id="refreshButton" type="button" data-i18n="refreshNow">Refresh Now</button>
+            </div>
+          </div>
+          <div id="standings" class="group-grid"></div>
+        </section>
+
+        <aside class="side-column">
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <span class="section-kicker" data-i18n="tournament">Tournament</span>
+                <h2 data-i18n="championOdds">Champion Odds</h2>
+              </div>
+            </div>
+            <div id="championOdds"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <span class="section-kicker" data-i18n="prediction">Prediction</span>
+                <h2 data-i18n="matchForecast">Match Forecast</h2>
+              </div>
+            </div>
+            <div class="control-row">
+              <label>
+                <span data-i18n="selectMatch">Select match</span>
+                <select id="forecastSelect"></select>
+              </label>
+              <button id="refreshEloButton" type="button" data-i18n="refreshElo">Refresh Elo</button>
+            </div>
+            <div id="forecasts" class="forecast-list"></div>
+          </section>
+        </aside>
+      </div>
+
+      <section class="panel bracket-panel">
+        <div class="panel-title">
+          <div>
+            <span class="section-kicker" data-i18n="roadToFinal">Road to the Final</span>
+            <h2 data-i18n="knockoutBracket">Knockout Bracket</h2>
+          </div>
+          <span class="bracket-hint" data-i18n="scrollPath">Scroll to follow the path</span>
+        </div>
+        <div id="bracket" class="bracket"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <div>
+            <span class="section-kicker" data-i18n="matchCentre">Match Centre</span>
+            <h2 data-i18n="latestResults">Latest Results</h2>
+          </div>
+        </div>
+        <div id="results" class="results-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <div>
+            <span class="section-kicker" data-i18n="fullSchedule">Full Schedule</span>
+            <h2 data-i18n="allMatchResults">All Match Results</h2>
+          </div>
+          <label class="stacked-control compact-control">
+            <span data-i18n="status">Status</span>
+            <select id="matchStatusFilter">
+              <option value="all">All matches</option>
+              <option value="finished">Finished</option>
+              <option value="upcoming">Upcoming</option>
+              <option value="live">Live</option>
+            </select>
+          </label>
+        </div>
+        <div id="allMatches" class="match-table-wrap"></div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

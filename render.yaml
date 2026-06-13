@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: world-cup-prediction
+    runtime: python
+    plan: free
+    buildCommand: ""
+    startCommand: python3 local_server.py
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: FOOTBALL_DATA_TOKEN
+        sync: false
+      - key: SPORTMONKS_API_TOKEN
+        sync: false
+      - key: SPORTMONKS_WORLD_CUP_SEASON_ID
+        sync: false
+      - key: ODDS_API_KEY
+        sync: false
+      - key: GOOGLE_SHEET_PREDICTIONS_CSV_URL
+        sync: false
+      - key: ELO_RATINGS_BASE_URL
+        value: https://www.eloratings.net
