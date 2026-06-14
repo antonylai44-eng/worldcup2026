@@ -2,6 +2,8 @@
 
 這是一個可公開部署的世界盃網頁儀表板。頁面會顯示分組積分榜、賽果、完整賽程、淘汰賽走線、冠軍賠率、Elo 預測，以及 Google Sheet 模型共識。
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/antonylai44-eng/worldcup2026)
+
 ## 目前架構
 
 ```text
@@ -65,6 +67,8 @@ cp .env.example .env
 
 建議使用 Render Free Web Service，因為它可以免費跑 Python 後端，也可以同時提供靜態網頁。
 
+部署完成後，Render 會提供一個公開的 `https://<service-name>.onrender.com` 網址，任何人都可以直接打開。
+
 步驟：
 
 1. 建立 GitHub repository。
@@ -75,9 +79,12 @@ cp .env.example .env
    - Runtime：Python
    - Build Command：留空
    - Start Command：`python3 local_server.py`
+   - Health Check Path：`/health`
    - Plan：Free
    - Environment Variable：`HOST=0.0.0.0`
 6. 在 Render 的 Environment Variables 加入你的 token。
+
+如果使用免費方案，網站在 15 分鐘沒有流量後會休眠。下一位訪客第一次打開時，通常需要等大約 1 分鐘讓服務喚醒。
 
 本 repo 已提供 `render.yaml`，Render Blueprint 可以直接讀取。
 
