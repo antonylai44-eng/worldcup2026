@@ -41,27 +41,26 @@
 
       <p id="message" class="message"></p>
 
-      <div class="layout">
-        <section class="panel standings-panel">
-          <div class="panel-title">
-            <div>
-              <span class="section-kicker">Group Stage</span>
-              <h2>Actual Group Tables</h2>
-            </div>
-            <div class="control-row">
-              <label>
-                <span>Show</span>
-                <select id="groupFilter">
-                  <option value="all">All groups</option>
-                </select>
-              </label>
-              <button id="refreshButton" type="button">Refresh Now</button>
-            </div>
-          </div>
-          <div id="standings" class="group-grid"></div>
-        </section>
+      <nav class="session-tabs" aria-label="Dashboard sections">
+        <button class="session-tab active" type="button" data-session-tab="overview" aria-controls="overviewPanel" aria-selected="true">
+          Overview
+        </button>
+        <button class="session-tab" type="button" data-session-tab="groups" aria-controls="groupsPanel" aria-selected="false">
+          Groups
+        </button>
+        <button class="session-tab" type="button" data-session-tab="bracket" aria-controls="bracketPanel" aria-selected="false">
+          Knockout Bracket
+        </button>
+        <button class="session-tab" type="button" data-session-tab="matches" aria-controls="matchesPanel" aria-selected="false">
+          Match Centre
+        </button>
+        <button class="session-tab" type="button" data-session-tab="news" aria-controls="newsPanel" aria-selected="false">
+          News
+        </button>
+      </nav>
 
-        <aside class="side-column">
+      <section id="overviewPanel" class="session-panel active" data-session-panel="overview">
+        <div class="overview-grid">
           <section class="panel">
             <div class="panel-title">
               <div>
@@ -85,47 +84,99 @@
             </label>
             <div id="forecasts" class="forecast-list"></div>
           </section>
-        </aside>
-      </div>
-
-      <section class="panel bracket-panel">
-        <div class="panel-title">
-          <div>
-            <span class="section-kicker">Road to the Final</span>
-            <h2>Knockout Bracket</h2>
-          </div>
-          <span class="bracket-hint">Scroll to follow the path</span>
         </div>
-        <div id="bracket" class="bracket"></div>
       </section>
 
-      <section class="panel">
-        <div class="panel-title">
-          <div>
-            <span class="section-kicker">Match Centre</span>
-            <h2>Latest Results</h2>
+      <section id="groupsPanel" class="session-panel" data-session-panel="groups">
+        <section class="panel standings-panel">
+          <div class="panel-title">
+            <div>
+              <span class="section-kicker">Group Stage</span>
+              <h2>Actual Group Tables</h2>
+            </div>
+            <div class="control-row">
+              <label>
+                <span>Show</span>
+                <select id="groupFilter">
+                  <option value="all">All groups</option>
+                </select>
+              </label>
+              <button id="refreshButton" type="button">Refresh Now</button>
+            </div>
           </div>
-        </div>
-        <div id="results" class="results-grid"></div>
+          <div id="standings" class="group-grid"></div>
+        </section>
       </section>
 
-      <section class="panel">
-        <div class="panel-title">
-          <div>
-            <span class="section-kicker">Full Schedule</span>
-            <h2>All Match Results</h2>
+      <section id="bracketPanel" class="session-panel" data-session-panel="bracket">
+        <section class="panel bracket-panel">
+          <div class="panel-title">
+            <div>
+              <span class="section-kicker">Road to the Final</span>
+              <h2>Knockout Bracket</h2>
+            </div>
+            <span class="bracket-hint">Scroll to follow the path</span>
           </div>
-          <label class="stacked-control compact-control">
-            <span>Status</span>
-            <select id="matchStatusFilter">
-              <option value="all">All matches</option>
-              <option value="finished">Finished</option>
-              <option value="upcoming">Upcoming</option>
-              <option value="live">Live</option>
-            </select>
-          </label>
-        </div>
-        <div id="allMatches" class="match-table-wrap"></div>
+          <div id="bracket" class="bracket"></div>
+        </section>
+      </section>
+
+      <section id="matchesPanel" class="session-panel" data-session-panel="matches">
+        <section class="panel">
+          <div class="panel-title">
+            <div>
+              <span class="section-kicker">Match Centre</span>
+              <h2>Latest Results</h2>
+            </div>
+          </div>
+          <div id="results" class="results-grid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <div>
+              <span class="section-kicker">Full Schedule</span>
+              <h2>All Match Results</h2>
+            </div>
+            <label class="stacked-control compact-control">
+              <span>Status</span>
+              <select id="matchStatusFilter">
+                <option value="all">All matches</option>
+                <option value="finished">Finished</option>
+                <option value="upcoming">Upcoming</option>
+                <option value="live">Live</option>
+              </select>
+            </label>
+          </div>
+          <div id="allMatches" class="match-table-wrap"></div>
+        </section>
+      </section>
+
+      <section id="newsPanel" class="session-panel" data-session-panel="news">
+        <section class="panel">
+          <div class="panel-title">
+            <div>
+              <span class="section-kicker">World Cup</span>
+              <h2>News</h2>
+            </div>
+            <div class="control-row">
+              <label>
+                <span>Source</span>
+                <select id="newsSourceFilter">
+                  <option value="all">All sources</option>
+                </select>
+              </label>
+              <label>
+                <span>Category</span>
+                <select id="newsCategoryFilter">
+                  <option value="all">All categories</option>
+                </select>
+              </label>
+              <button id="refreshNewsButton" type="button">Refresh Now</button>
+            </div>
+          </div>
+          <div id="newsFeed" class="news-feed"></div>
+        </section>
       </section>
     </main>
 

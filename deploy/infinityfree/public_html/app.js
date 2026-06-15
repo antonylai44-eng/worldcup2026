@@ -4,6 +4,9 @@ let currentDashboard;
 let selectedGroup = "all";
 let selectedForecastIndex = 0;
 let selectedMatchStatus = "all";
+let selectedNewsSource = "all";
+let selectedNewsCategory = "all";
+let selectedSession = "overview";
 
 const countryFlags = {
   Algeria: "🇩🇿",
@@ -155,6 +158,29 @@ function sampleBracket() {
   ];
 }
 
+function sampleEloPrediction(home, away, homeRating, awayRating, homeRank, awayRank) {
+  const homeExpected = 1 / (1 + 10 ** ((awayRating - homeRating) / 400));
+  const awayExpected = 1 - homeExpected;
+  const homeChance = Number((homeExpected * 100).toFixed(1));
+  const awayChance = Number((awayExpected * 100).toFixed(1));
+  const predictedResult = homeExpected >= awayExpected ? "home_win" : "away_win";
+  const predictedWinner = predictedResult === "home_win" ? home : away;
+  return {
+    formula: "1 / (1 + 10^((opponent_rating - team_rating) / 400))",
+    home: { team: home, code: "", rank: homeRank, rating: homeRating },
+    away: { team: away, code: "", rank: awayRank, rating: awayRating },
+    homeChance,
+    awayChance,
+    lean: predictedWinner,
+    predictedResult,
+    predictedWinner,
+    resultLabel: `${predictedWinner} win`,
+    edge: Number(Math.abs(homeChance - awayChance).toFixed(1)),
+    ratingDiff: homeRating - awayRating,
+    source: "World Football Elo Ratings"
+  };
+}
+
 const sampleDashboard = {
   mode: "sample",
   updatedAt: new Date().toISOString(),
@@ -173,9 +199,33 @@ const sampleDashboard = {
   allMatches: [],
   bracket: sampleBracket(),
   forecasts: [
-    { match: "Mexico vs Argentina", home: "Mexico", away: "Argentina", homeWin: 27, draw: 24, awayWin: 49 },
-    { match: "Brazil vs Germany", home: "Brazil", away: "Germany", homeWin: 43, draw: 25, awayWin: 32 },
-    { match: "France vs Portugal", home: "France", away: "Portugal", homeWin: 39, draw: 28, awayWin: 33 }
+    {
+      match: "Mexico vs Argentina",
+      home: "Mexico",
+      away: "Argentina",
+      homeWin: 27,
+      draw: 24,
+      awayWin: 49,
+      eloPrediction: sampleEloPrediction("Mexico", "Argentina", 1730, 2140, 15, 1)
+    },
+    {
+      match: "Brazil vs Germany",
+      home: "Brazil",
+      away: "Germany",
+      homeWin: 43,
+      draw: 25,
+      awayWin: 32,
+      eloPrediction: sampleEloPrediction("Brazil", "Germany", 2098, 1988, 2, 8)
+    },
+    {
+      match: "France vs Portugal",
+      home: "France",
+      away: "Portugal",
+      homeWin: 39,
+      draw: 28,
+      awayWin: 33,
+      eloPrediction: sampleEloPrediction("France", "Portugal", 2052, 1998, 4, 7)
+    }
   ],
   championOdds: [
     { team: "Argentina", odds: 5.5, source: "Power Rank" },
@@ -205,8 +255,14 @@ const elements = {
   forecasts: document.getElementById("forecasts"),
   forecastSelect: document.getElementById("forecastSelect"),
   groupFilter: document.getElementById("groupFilter"),
+  newsFeed: document.getElementById("newsFeed"),
+  newsSourceFilter: document.getElementById("newsSourceFilter"),
+  newsCategoryFilter: document.getElementById("newsCategoryFilter"),
+  refreshNewsButton: document.getElementById("refreshNewsButton"),
   championOdds: document.getElementById("championOdds"),
-  refreshButton: document.getElementById("refreshButton")
+  refreshButton: document.getElementById("refreshButton"),
+  sessionTabs: document.querySelectorAll("[data-session-tab]"),
+  sessionPanels: document.querySelectorAll("[data-session-panel]")
 };
 
 function escapeHtml(value) {
@@ -267,6 +323,130 @@ function formatKickoff(value) {
   }).format(new Date(value));
 }
 
+function toNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatPercent(value) {
+  const numeric = toNumber(value);
+  if (numeric === null) {
+    return "-";
+  }
+
+  return `${numeric.toFixed(1)}%`;
+}
+
+function confidenceLabel(edge) {
+  if (edge === null || edge === undefined) {
+    return "Pending";
+  }
+
+  if (edge >= 15) {
+    return "Strong edge";
+  }
+
+  if (edge >= 7) {
+    return "Balanced";
+  }
+
+  return "Tight";
+}
+
+function drawRiskLabel(drawChance) {
+  if (drawChance === null || drawChance === undefined) {
+    return "Pending";
+  }
+
+  if (drawChance >= 30) {
+    return "High";
+  }
+
+  if (drawChance >= 22) {
+    return "Medium";
+  }
+
+  return "Low";
+}
+
+function forecastOutcomes(forecast) {
+  const outcomes = [
+    { key: "home", label: forecast.home, value: toNumber(forecast.homeWin) },
+    { key: "draw", label: "Draw", value: toNumber(forecast.draw) },
+    { key: "away", label: forecast.away, value: toNumber(forecast.awayWin) }
+  ].filter((outcome) => outcome.value !== null);
+
+  return outcomes.sort((left, right) => right.value - left.value);
+}
+
+function forecastMarketPick(outcome, forecast) {
+  if (!outcome) {
+    return "Pending";
+  }
+
+  if (outcome.key === "draw") {
+    return "Draw";
+  }
+
+  return outcome.key === "home" ? forecast.home : forecast.away;
+}
+
+function forecastModelAgreement(leader, prediction) {
+  if (!leader || !prediction) {
+    return "-";
+  }
+
+  if (leader.key === "draw") {
+    return prediction.predictedResult === "draw" ? "Aligned" : "Split";
+  }
+
+  const marketPick = leader.key === "home" ? prediction.home?.team : prediction.away?.team;
+  const eloPick = prediction.predictedWinner || prediction.lean;
+  return marketPick && eloPick && marketPick === eloPick ? "Aligned" : "Split";
+}
+
+function renderProbabilityMix(outcomes) {
+  return `
+    <div class="probability-strip" aria-hidden="true">
+      ${outcomes
+        .map(
+          (outcome) => `
+            <span
+              class="probability-segment probability-segment-${outcome.key}"
+              style="width: ${outcome.value}%"
+            ></span>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function formatNewsDate(value) {
+  if (!value) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function setSession(session) {
+  selectedSession = session;
+  elements.sessionTabs.forEach((tab) => {
+    const isActive = tab.dataset.sessionTab === session;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", String(isActive));
+  });
+  elements.sessionPanels.forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.sessionPanel === session);
+  });
+}
+
 function syncGroupFilter(groups) {
   const currentValue = elements.groupFilter.value || selectedGroup;
   elements.groupFilter.innerHTML = [
@@ -277,6 +457,54 @@ function syncGroupFilter(groups) {
   const hasCurrent = currentValue === "all" || groups.some((group) => group.name === currentValue);
   selectedGroup = hasCurrent ? currentValue : "all";
   elements.groupFilter.value = selectedGroup;
+}
+
+function normalizeNewsItem(item) {
+  return {
+    title: item?.title || "World Cup news",
+    source: item?.source || "Google News",
+    url: item?.url || "https://news.google.com/search?q=FIFA+World+Cup+2026",
+    category: item?.category || "Latest",
+    publishedAt: item?.publishedAt || "",
+    summary: item?.summary || ""
+  };
+}
+
+function displayNewsCategory(category) {
+  return category || "-";
+}
+
+function displayEloResult(prediction) {
+  if (!prediction) {
+    return "";
+  }
+
+  if (prediction.predictedResult === "draw") {
+    return "Draw";
+  }
+
+  return prediction.resultLabel || `${prediction.predictedWinner || prediction.lean} win`;
+}
+
+function newsFallbackItems() {
+  return [
+    {
+      title: "FIFA World Cup news",
+      source: "FIFA",
+      url: "https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles",
+      category: "Official",
+      publishedAt: "",
+      summary: "Official tournament news, announcements, host-city updates, and competition features."
+    },
+    {
+      title: "World Cup 2026 news search",
+      source: "Google News",
+      url: "https://news.google.com/search?q=FIFA%20World%20Cup%202026",
+      category: "Latest",
+      publishedAt: "",
+      summary: "A live search page for current World Cup headlines from multiple publishers."
+    }
+  ];
 }
 
 function renderStandings(groups) {
@@ -459,6 +687,12 @@ function renderForecasts(forecasts) {
   elements.forecastSelect.value = String(selectedForecastIndex);
 
   const forecast = forecasts[selectedForecastIndex];
+  const eloPrediction = forecast.eloPrediction;
+  const outcomes = forecastOutcomes(forecast);
+  const leader = outcomes[0];
+  const runnerUp = outcomes[1];
+  const edge = leader && runnerUp ? Number((leader.value - runnerUp.value).toFixed(1)) : null;
+  const drawChance = outcomes.find((outcome) => outcome.key === "draw")?.value ?? null;
   const hasProbabilities =
     forecast.homeWin !== null &&
     forecast.homeWin !== undefined &&
@@ -471,7 +705,7 @@ function renderForecasts(forecasts) {
     <article class="forecast-card forecast-card-featured">
       <div class="forecast-head">
         <span>${escapeHtml(forecast.match)}</span>
-        <span class="probability-chip">${hasProbabilities ? `${escapeHtml(forecast.homeWin)}%` : "Fixture"}</span>
+        <span class="probability-chip">${hasProbabilities ? formatPercent(leader?.value) : "Fixture"}</span>
       </div>
       <div class="forecast-meta">
         <span>${escapeHtml(forecast.status || "Upcoming")}</span>
@@ -481,11 +715,46 @@ function renderForecasts(forecasts) {
       ${
         hasProbabilities
           ? `
-            <div class="bar"><div class="bar-fill" style="width: ${Number(forecast.homeWin || 0)}%"></div></div>
+            <div class="signal-grid">
+              <article class="signal-card">
+                <span class="signal-label">Market leader</span>
+                <strong>${escapeHtml(forecastMarketPick(leader, forecast))}</strong>
+                <small>${escapeHtml(formatPercent(leader?.value))}</small>
+              </article>
+              <article class="signal-card">
+                <span class="signal-label">Confidence</span>
+                <strong>${escapeHtml(confidenceLabel(edge))}</strong>
+                <small>${edge === null ? "Pending" : `${escapeHtml(edge)} pts`}</small>
+              </article>
+              <article class="signal-card">
+                <span class="signal-label">Draw risk</span>
+                <strong>${escapeHtml(drawRiskLabel(drawChance))}</strong>
+                <small>${escapeHtml(formatPercent(drawChance))}</small>
+              </article>
+              <article class="signal-card">
+                <span class="signal-label">Model agreement</span>
+                <strong>${escapeHtml(forecastModelAgreement(leader, eloPrediction))}</strong>
+                <small>${eloPrediction ? "World Football Elo" : "Pending"}</small>
+              </article>
+            </div>
+            <div class="forecast-block">
+              <div class="forecast-block-head">
+                <span>Probability mix</span>
+                <strong>Projection signals</strong>
+              </div>
+              ${renderProbabilityMix(outcomes)}
+            </div>
             <div class="forecast-grid">
-              <span>${teamLabel(forecast.home)} ${escapeHtml(forecast.homeWin)}%</span>
-              <span>Draw ${escapeHtml(forecast.draw)}%</span>
-              <span>${teamLabel(forecast.away)} ${escapeHtml(forecast.awayWin)}%</span>
+              ${outcomes
+                .map(
+                  (outcome) => `
+                    <article class="forecast-outcome ${leader?.key === outcome.key ? "active" : ""}">
+                      <span>${escapeHtml(outcome.label)}</span>
+                      <strong>${escapeHtml(formatPercent(outcome.value))}</strong>
+                    </article>
+                  `
+                )
+                .join("")}
             </div>
           `
           : `
@@ -494,6 +763,41 @@ function renderForecasts(forecasts) {
               <span>${escapeHtml(forecast.predictionStatus || "Add a prediction provider token to show real probabilities.")}</span>
             </div>
           `
+      }
+      ${
+        eloPrediction
+          ? `
+            <div class="elo-prediction">
+              <div class="elo-prediction-head">
+                <span>World Football Elo</span>
+                <strong>${escapeHtml(eloPrediction.lean)} lean</strong>
+              </div>
+              <div class="elo-result">
+                <span>Elo predicted result</span>
+                <strong>${escapeHtml(displayEloResult(eloPrediction))}</strong>
+                ${eloPrediction.edge !== undefined ? `<small>${escapeHtml(eloPrediction.edge)} pts edge</small>` : ""}
+              </div>
+              <div class="elo-bars">
+                <div>
+                  <div class="elo-row">
+                    ${teamLabel(forecast.home)}
+                    <strong>${escapeHtml(eloPrediction.homeChance)}%</strong>
+                  </div>
+                  <div class="elo-bar"><span style="width: ${Number(eloPrediction.homeChance || 0)}%"></span></div>
+                  <small>#${escapeHtml(eloPrediction.home.rank)} · ${escapeHtml(eloPrediction.home.rating)} Elo</small>
+                </div>
+                <div>
+                  <div class="elo-row">
+                    ${teamLabel(forecast.away)}
+                    <strong>${escapeHtml(eloPrediction.awayChance)}%</strong>
+                  </div>
+                  <div class="elo-bar"><span style="width: ${Number(eloPrediction.awayChance || 0)}%"></span></div>
+                  <small>#${escapeHtml(eloPrediction.away.rank)} · ${escapeHtml(eloPrediction.away.rating)} Elo</small>
+                </div>
+              </div>
+            </div>
+          `
+          : ""
       }
     </article>
   `;
@@ -507,6 +811,62 @@ function renderChampionOdds(rows) {
           <span><b>${teamLabel(row.team)}</b><small>${escapeHtml(row.source || "Market")}</small></span>
           <strong>${Number(row.odds || 0).toFixed(2)}</strong>
         </div>
+      `
+    )
+    .join("");
+}
+
+function syncNewsFilters(newsItems) {
+  const sources = Array.from(new Set(newsItems.map((item) => item.source).filter(Boolean))).sort();
+  const categories = Array.from(new Set(newsItems.map((item) => item.category).filter(Boolean))).sort();
+  const sourceValue = elements.newsSourceFilter.value || selectedNewsSource;
+  const categoryValue = elements.newsCategoryFilter.value || selectedNewsCategory;
+
+  elements.newsSourceFilter.innerHTML = [
+    `<option value="all">All sources</option>`,
+    ...sources.map((source) => `<option value="${escapeHtml(source)}">${escapeHtml(source)}</option>`)
+  ].join("");
+  elements.newsCategoryFilter.innerHTML = [
+    `<option value="all">All categories</option>`,
+    ...categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(displayNewsCategory(category))}</option>`)
+  ].join("");
+
+  selectedNewsSource = sources.includes(sourceValue) || sourceValue === "all" ? sourceValue : "all";
+  selectedNewsCategory = categories.includes(categoryValue) || categoryValue === "all" ? categoryValue : "all";
+  elements.newsSourceFilter.value = selectedNewsSource;
+  elements.newsCategoryFilter.value = selectedNewsCategory;
+}
+
+function renderNews(newsItems) {
+  const items = (newsItems?.length ? newsItems : newsFallbackItems()).map(normalizeNewsItem);
+  syncNewsFilters(items);
+
+  const filtered = items.filter((item) => {
+    const sourceMatches = selectedNewsSource === "all" || item.source === selectedNewsSource;
+    const categoryMatches = selectedNewsCategory === "all" || item.category === selectedNewsCategory;
+    return sourceMatches && categoryMatches;
+  });
+
+  if (!filtered.length) {
+    elements.newsFeed.innerHTML = `<p class="empty-note">World Cup news will appear here when headlines are available.</p>`;
+    return;
+  }
+
+  elements.newsFeed.innerHTML = filtered
+    .map(
+      (item) => `
+        <article class="news-card">
+          <div class="news-card-head">
+            <span class="status-pill">${escapeHtml(displayNewsCategory(item.category))}</span>
+            ${item.publishedAt ? `<time datetime="${escapeHtml(item.publishedAt)}">${escapeHtml(formatNewsDate(item.publishedAt))}</time>` : ""}
+          </div>
+          <h3><a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.title)}</a></h3>
+          <p>${escapeHtml(item.summary)}</p>
+          <div class="news-card-foot">
+            <span>Source: ${escapeHtml(item.source)}</span>
+            <a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Open story</a>
+          </div>
+        </article>
       `
     )
     .join("");
@@ -544,6 +904,7 @@ function renderDashboard(data) {
   renderAllMatches(data.allMatches || []);
   renderForecasts(data.forecasts || []);
   renderChampionOdds(data.championOdds || []);
+  renderNews(data.news || []);
 }
 
 async function loadDashboard() {
@@ -593,5 +954,18 @@ elements.matchStatusFilter.addEventListener("change", (event) => {
   selectedMatchStatus = event.target.value;
   renderAllMatches(currentDashboard?.allMatches || []);
 });
+elements.newsSourceFilter.addEventListener("change", (event) => {
+  selectedNewsSource = event.target.value;
+  renderNews(currentDashboard?.news || []);
+});
+elements.newsCategoryFilter.addEventListener("change", (event) => {
+  selectedNewsCategory = event.target.value;
+  renderNews(currentDashboard?.news || []);
+});
+elements.sessionTabs.forEach((tab) => {
+  tab.addEventListener("click", () => setSession(tab.dataset.sessionTab));
+});
+elements.refreshNewsButton?.addEventListener("click", () => loadDashboard());
+setSession(selectedSession);
 loadDashboard();
 startAutoRefresh();
