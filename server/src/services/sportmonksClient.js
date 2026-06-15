@@ -81,6 +81,12 @@ export class SportmonksClient {
       include: "type;fixture.participants"
     });
   }
+
+  getFixtureById(fixtureId) {
+    return this.get(`/fixtures/${fixtureId}`, {
+      include: "participants;state;scores"
+    });
+  }
 }
 
 export const sportmonksClient = new SportmonksClient(env.sportmonks);

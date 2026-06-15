@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BracketRound, ChampionOddsResponse, Fixture, TournamentSummary } from "../api/worldCupApi";
+import type { BracketRound, ChampionOddsResponse, Fixture, Forecast, TournamentSummary } from "../api/worldCupApi";
 import { worldCupApi } from "../api/worldCupApi";
 import { ChampionOddsTable } from "./ChampionOddsTable";
 import { ForecastCard } from "./ForecastCard";
 import { KnockoutBracket } from "./KnockoutBracket";
+
+type DashboardTab = "overview" | "bracket" | "live";
+
+const tabs: Array<{ id: DashboardTab; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "bracket", label: "Knockout Bracket" },
+  { id: "live", label: "Live Matches" }
+];
 
 function nextFixture(summary?: TournamentSummary) {
   const fixtures = summary?.schedules.flatMap((schedule) => {
@@ -19,8 +27,9 @@ export function TournamentDashboard() {
   const [bracket, setBracket] = useState<BracketRound[]>([]);
   const [liveScores, setLiveScores] = useState<Fixture[]>([]);
   const [odds, setOdds] = useState<ChampionOddsResponse>();
-  const [forecast, setForecast] = useState<Awaited<ReturnType<typeof worldCupApi.getForecast>>["data"]>([]);
+  const [forecast, setForecast] = useState<Forecast>();
   const [error, setError] = useState<string>();
+  const [activeTab, setActiveTab] = useState<DashboardTab>("overview");
 
   const upcomingFixture = useMemo(() => nextFixture(summary), [summary]);
 
@@ -53,7 +62,7 @@ export function TournamentDashboard() {
     worldCupApi
       .getForecast(upcomingFixture.id)
       .then((response) => setForecast(response.data))
-      .catch(() => setForecast([]));
+      .catch(() => setForecast(undefined));
   }, [upcomingFixture?.id]);
 
   useEffect(() => {
@@ -88,13 +97,57 @@ export function TournamentDashboard() {
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
         ) : null}
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <KnockoutBracket rounds={bracket} />
-          <div className="flex flex-col gap-5">
+        <nav
+          aria-label="Dashboard sections"
+          className="sticky top-0 z-10 flex gap-2 overflow-x-auto rounded-lg border border-slate-200 bg-white/90 p-1 shadow-sm backdrop-blur"
+        >
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              aria-selected={activeTab === tab.id}
+              className={`min-h-10 flex-1 whitespace-nowrap rounded-md px-4 text-sm font-semibold transition ${
+                activeTab === tab.id ? "bg-pitch text-white" : "text-slate-600 hover:bg-slate-100 hover:text-ink"
+              }`}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
+        {activeTab === "overview" ? (
+          <div className="grid gap-5 lg:grid-cols-2">
             <ForecastCard fixture={upcomingFixture} forecast={forecast} />
             <ChampionOddsTable odds={odds} />
           </div>
-        </div>
+        ) : null}
+
+        {activeTab === "bracket" ? <KnockoutBracket rounds={bracket} /> : null}
+
+        {activeTab === "live" ? (
+          <section className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">Live Matches</h2>
+              <span className="text-xs font-medium text-slate-500">{liveScores.length} matches</span>
+            </div>
+
+            {liveScores.length ? (
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {liveScores.map((fixture) => (
+                  <article key={fixture.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-medium text-slate-500">
+                      {fixture.state?.short_name ?? fixture.state?.name ?? "Live"}
+                    </div>
+                    <div className="text-sm font-semibold text-ink">{fixture.name}</div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-600">Live matches will appear here when games are in progress.</p>
+            )}
+          </section>
+        ) : null}
       </div>
     </main>
   );

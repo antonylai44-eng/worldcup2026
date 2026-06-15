@@ -1,28 +1,26 @@
 import { env } from "../config/env.js";
 
 export class OddsApiClient {
-  constructor({ baseUrl, key, regions, worldCupOutrightSportKey }) {
+  constructor({ baseUrl, key, regions, matchSportKey, worldCupOutrightSportKey }) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.key = key;
     this.regions = regions;
+    this.matchSportKey = matchSportKey;
     this.worldCupOutrightSportKey = worldCupOutrightSportKey;
   }
 
-  async getChampionOutrights() {
+  async get(path, query = {}) {
     if (!this.key) {
-      return {
-        data: [],
-        provider: "the-odds-api",
-        configured: false,
-        message: "ODDS_API_KEY is not configured."
-      };
+      throw new Error("ODDS_API_KEY is not configured.");
     }
 
-    const url = new URL(`${this.baseUrl}/sports/${this.worldCupOutrightSportKey}/odds`);
-    url.searchParams.set("apiKey", this.key);
-    url.searchParams.set("regions", this.regions);
-    url.searchParams.set("markets", "outrights");
-    url.searchParams.set("oddsFormat", "decimal");
+    const url = new URL(`${this.baseUrl}${path}`);
+
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null && value !== "") {
+        url.searchParams.set(key, String(value));
+      }
+    }
 
     const response = await fetch(url, {
       headers: {
@@ -41,14 +39,65 @@ export class OddsApiClient {
     }
 
     return {
-      data: payload,
-      provider: "the-odds-api",
-      configured: true,
+      payload,
       quota: {
         remaining: response.headers.get("x-requests-remaining"),
         used: response.headers.get("x-requests-used"),
         last: response.headers.get("x-requests-last")
       }
+    };
+  }
+
+  async getChampionOutrights() {
+    if (!this.key) {
+      return {
+        data: [],
+        provider: "the-odds-api",
+        configured: false,
+        message: "ODDS_API_KEY is not configured."
+      };
+    }
+
+    const { payload, quota } = await this.get(`/sports/${this.worldCupOutrightSportKey}/odds`, {
+      apiKey: this.key,
+      regions: this.regions,
+      markets: "outrights",
+      oddsFormat: "decimal"
+    });
+
+    return {
+      data: payload,
+      provider: "the-odds-api",
+      configured: true,
+      quota
+    };
+  }
+
+  async getMatchOdds({ commenceTimeFrom, commenceTimeTo } = {}) {
+    if (!this.key) {
+      return {
+        data: [],
+        provider: "the-odds-api",
+        configured: false,
+        message: "ODDS_API_KEY is not configured."
+      };
+    }
+
+    const { payload, quota } = await this.get(`/sports/${this.matchSportKey}/odds`, {
+      apiKey: this.key,
+      regions: this.regions,
+      markets: "h2h",
+      oddsFormat: "decimal",
+      dateFormat: "iso",
+      commenceTimeFrom,
+      commenceTimeTo
+    });
+
+    return {
+      data: payload,
+      provider: "the-odds-api",
+      configured: true,
+      quota
     };
   }
 }

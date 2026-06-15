@@ -75,18 +75,50 @@ export type TournamentSummary = {
   live: Fixture[];
 };
 
-export type Forecast = Array<{
-  id: number;
-  predictions?: Array<{
-    type_id?: number;
-    value?: string | number;
-    probability?: string | number;
-  }>;
-  type?: {
-    name?: string;
-    code?: string;
+export type ForecastProvider = {
+  id: string;
+  name: string;
+  configured: boolean;
+  available: boolean;
+  probabilities: {
+    homeWin: number | null;
+    draw: number | null;
+    awayWin: number | null;
   };
-}>;
+  pick: string | null;
+  confidence: "strong" | "balanced" | "tight" | "pending" | string;
+  market?: string;
+  message?: string;
+  advice?: string;
+  expectedGoals?: {
+    home?: string;
+    away?: string;
+  };
+  bookmakers?: number;
+};
+
+export type Forecast = {
+  fixture: {
+    id?: number;
+    name?: string;
+    kickoff?: string;
+    status?: string;
+    homeTeam: string;
+    awayTeam: string;
+  };
+  providers: ForecastProvider[];
+  consensus: {
+    providerCount: number;
+    probabilities: {
+      homeWin: number | null;
+      draw: number | null;
+      awayWin: number | null;
+    };
+    pick: string | null;
+    confidence: "strong" | "balanced" | "tight" | "pending" | string;
+    agreement: "aligned" | "partial" | "split" | "pending" | string;
+  };
+};
 
 export type ChampionOddsResponse = {
   provider: string;
@@ -121,8 +153,7 @@ export const worldCupApi = {
   getBracket: () => request<ApiEnvelope<BracketRound[]>>("/api/tournament/bracket"),
   getStandings: () => request<ApiEnvelope<StandingRow[]>>("/api/tournament/standings"),
   getLiveScores: () => request<ApiEnvelope<Fixture[]>>("/api/tournament/live"),
-  getForecast: (fixtureId: number | string) =>
-    request<ApiEnvelope<Forecast>>(`/api/forecast/match/${fixtureId}`),
+  getForecast: (fixtureId: number | string) => request<ApiEnvelope<Forecast>>(`/api/forecast/match/${fixtureId}`),
   getChampionOdds: () => request<ChampionOddsResponse>("/api/odds/champion"),
   liveScoresStreamUrl: `${API_BASE_URL}/api/tournament/live/stream`
 };

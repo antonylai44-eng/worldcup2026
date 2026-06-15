@@ -2,15 +2,19 @@
 import csv
 import errno
 import hashlib
+import html
 import io
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
@@ -19,11 +23,11 @@ PORT = int(os.environ.get("PORT", "8080"))
 HOST = os.environ.get("HOST", "127.0.0.1")
 
 CACHE = {}
-ONE_HOUR_SECONDS = 60 * 60
 FOOTBALL_DATA_CACHE_SECONDS = 12 * 60 * 60
-MATCH_ODDS_CACHE_SECONDS = 30 * 60
+MATCH_ODDS_CACHE_SECONDS = 12 * 60 * 60
 CHAMPION_ODDS_CACHE_SECONDS = 24 * 60 * 60
 ELO_CACHE_SECONDS = 12 * 60 * 60
+NEWS_CACHE_SECONDS = 30 * 60
 GOOGLE_SHEET_CACHE_FILE = CACHE_DIR / "google_sheet_predictions.json"
 HONG_KONG_TZ = timezone(timedelta(hours=8))
 
@@ -141,6 +145,35 @@ def football_data_get(path, params=None):
     return cached_loader(cache_key, FOOTBALL_DATA_CACHE_SECONDS, loader)
 
 
+def api_football_get(path, params=None):
+    token = os.environ.get("API_FOOTBALL_KEY", "")
+    base_url = os.environ.get("API_FOOTBALL_BASE_URL", "https://v3.football.api-sports.io").rstrip("/")
+
+    if not token:
+        raise RuntimeError("API_FOOTBALL_KEY is not configured")
+
+    cache_key = f"api-football:{path}:{urllib.parse.urlencode(params or {})}"
+
+    def loader():
+        url = f"{base_url}{path}"
+        if params:
+            url = f"{url}?{urllib.parse.urlencode(params)}"
+
+        headers = {
+            "Accept": "application/json",
+            "x-apisports-key": token,
+        }
+        host = os.environ.get("API_FOOTBALL_HOST", "").strip()
+        if host:
+            headers["x-rapidapi-host"] = host
+
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=12) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    return cached_loader(cache_key, MATCH_ODDS_CACHE_SECONDS, loader)
+
+
 def elo_ratings_get():
     return cached_loader("elo:world-ratings", ELO_CACHE_SECONDS, elo_ratings_get_uncached)
 
@@ -160,15 +193,18 @@ def elo_ratings_get_uncached():
         rank = parse_int(columns[0])
         code = columns[2]
         rating = parse_int(columns[3])
-        team_name = team_names.get(code)
+        names = team_names.get(code) or []
+        team_name = names[0] if names else ""
         if not team_name or rank is None or rating is None:
             continue
-        ratings[canonical_team_name(team_name)] = {
+        rating_payload = {
             "team": team_name,
             "code": code,
             "rank": rank,
             "rating": rating,
         }
+        for name in names:
+            ratings[canonical_team_name(name)] = rating_payload
     return ratings
 
 
@@ -181,13 +217,20 @@ def fetch_elo_team_names(base_url):
     for line in teams_tsv.splitlines():
         columns = line.split("\t")
         if len(columns) >= 2:
-            teams[columns[0]] = columns[1]
+            teams[columns[0]] = [column for column in columns[1:] if column]
     return teams
 
 
 def parse_int(value):
     try:
         return int(str(value).replace("−", "-"))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_percent(value):
+    try:
+        return round(float(str(value).replace("%", "").strip()), 1)
     except (TypeError, ValueError):
         return None
 
@@ -395,6 +438,183 @@ def odds_api_get_match_predictions_uncached():
     return predictions
 
 
+def api_football_prediction_for_match(home, away, kickoff):
+    if not os.environ.get("API_FOOTBALL_KEY"):
+        return provider_stub("api-football", "API-Football", False, "API_FOOTBALL_KEY is not configured.")
+
+    cache_key = f"api-football:prediction:{canonical_team_name(home)}:{canonical_team_name(away)}:{kickoff or ''}"
+
+    def loader():
+        parsed = parse_utc(kickoff)
+        if not parsed:
+            return provider_stub("api-football", "API-Football", True, "Kickoff date is missing for this fixture.")
+
+        dates = {
+            parsed.strftime("%Y-%m-%d"),
+            (parsed - timedelta(days=1)).strftime("%Y-%m-%d"),
+            (parsed + timedelta(days=1)).strftime("%Y-%m-%d"),
+        }
+
+        league = os.environ.get("API_FOOTBALL_WORLD_CUP_LEAGUE_ID", "").strip()
+        season = os.environ.get("API_FOOTBALL_SEASON", "").strip()
+
+        for date_value in sorted(dates):
+            params = {"date": date_value}
+            if league:
+                params["league"] = league
+            if season:
+                params["season"] = season
+
+            fixtures_payload = api_football_get("/fixtures", params)
+            for fixture in fixtures_payload.get("response", []):
+                teams = fixture.get("teams") or {}
+                if canonical_team_name((teams.get("home") or {}).get("name")) != canonical_team_name(home):
+                    continue
+                if canonical_team_name((teams.get("away") or {}).get("name")) != canonical_team_name(away):
+                    continue
+
+                fixture_id = ((fixture.get("fixture") or {}).get("id"))
+                if not fixture_id:
+                    continue
+
+                prediction_payload = api_football_get("/predictions", {"fixture": fixture_id})
+                prediction = (prediction_payload.get("response") or [{}])[0]
+                percent = (prediction.get("predictions") or {}).get("percent") or {}
+                home_win = parse_percent(percent.get("home"))
+                draw = parse_percent(percent.get("draw"))
+                away_win = parse_percent(percent.get("away"))
+                outcomes = sorted_outcomes((home, home_win), draw, (away, away_win))
+                edge = outcomes[0]["probability"] - outcomes[1]["probability"] if len(outcomes) > 1 else None
+
+                return {
+                    "id": "api-football",
+                    "name": "API-Football",
+                    "configured": True,
+                    "available": bool(outcomes),
+                    "homeWin": home_win,
+                    "draw": draw,
+                    "awayWin": away_win,
+                    "pick": ((prediction.get("predictions") or {}).get("winner") or {}).get("name") or (outcomes[0]["label"] if outcomes else None),
+                    "confidence": confidence_label(edge),
+                    "message": "",
+                    "advice": (prediction.get("predictions") or {}).get("advice") or "",
+                }
+
+        return provider_stub("api-football", "API-Football", True, "API-Football did not return a matching fixture.")
+
+    return cached_loader(cache_key, MATCH_ODDS_CACHE_SECONDS, loader)
+
+
+def sportmonks_schedule_index():
+    season_id = os.environ.get("SPORTMONKS_WORLD_CUP_SEASON_ID", "")
+    token = os.environ.get("SPORTMONKS_API_TOKEN", "")
+    if not token or not season_id:
+        return []
+
+    def loader():
+        schedules = sportmonks_get(
+            f"/schedules/seasons/{season_id}",
+            {"include": "round.stage;fixtures.participants;fixtures.state"},
+        ).get("data", [])
+
+        fixtures = []
+        for schedule in schedules:
+            for fixture in schedule.get("fixtures", []) or []:
+                participants = fixture.get("participants", []) or []
+                home_team = next((team for team in participants if (team.get("meta") or {}).get("location") == "home"), None)
+                away_team = next((team for team in participants if (team.get("meta") or {}).get("location") == "away"), None)
+                if len(participants) >= 2:
+                    home_team = home_team or participants[0]
+                    away_team = away_team or participants[1]
+                fixtures.append(
+                    {
+                        "id": fixture.get("id"),
+                        "kickoff": fixture.get("starting_at"),
+                        "home": (home_team or {}).get("name"),
+                        "away": (away_team or {}).get("name"),
+                    }
+                )
+        return fixtures
+
+    return cached_loader("sportmonks:fixtures:index", FOOTBALL_DATA_CACHE_SECONDS, loader)
+
+
+def sportmonks_prediction_for_match(home, away, kickoff):
+    configured = bool(os.environ.get("SPORTMONKS_API_TOKEN") and os.environ.get("SPORTMONKS_WORLD_CUP_SEASON_ID"))
+    if not configured:
+        return provider_stub("sportmonks", "Sportmonks", False, "Sportmonks predictions are not configured.")
+
+    cache_key = f"sportmonks:prediction:{canonical_team_name(home)}:{canonical_team_name(away)}:{kickoff or ''}"
+
+    def loader():
+        parsed = parse_utc(kickoff)
+        fixtures = sportmonks_schedule_index()
+        matched = None
+        for fixture in fixtures:
+            if canonical_team_name(fixture.get("home")) != canonical_team_name(home):
+                continue
+            if canonical_team_name(fixture.get("away")) != canonical_team_name(away):
+                continue
+            if parsed and fixture.get("kickoff"):
+                fixture_parsed = parse_utc(fixture.get("kickoff"))
+                if fixture_parsed and abs((fixture_parsed - parsed).total_seconds()) > 12 * 60 * 60:
+                    continue
+            matched = fixture
+            break
+
+        if not matched or not matched.get("id"):
+            return provider_stub("sportmonks", "Sportmonks", True, "Sportmonks did not return a matching fixture.")
+
+        payload = sportmonks_get(
+            f"/predictions/probabilities/fixtures/{matched['id']}",
+            {"include": "type;fixture.participants"},
+        ).get("data", [])
+        winner_market = next(
+            (
+                item
+                for item in payload
+                if re.search(r"winner|fulltime|1x2", f"{((item.get('type') or {}).get('name') or '')} {((item.get('type') or {}).get('code') or '')}", re.IGNORECASE)
+            ),
+            None,
+        )
+
+        home_win = None
+        draw = None
+        away_win = None
+        for prediction in (winner_market or {}).get("predictions", []) or []:
+            value = canonical_team_name(prediction.get("value"))
+            probability = parse_percent(prediction.get("probability"))
+            if probability is None:
+                continue
+            if value in {"1", "home", canonical_team_name(home)}:
+                home_win = probability
+            elif value in {"x", "draw", "tie"}:
+                draw = probability
+            elif value in {"2", "away", canonical_team_name(away)}:
+                away_win = probability
+
+        outcomes = sorted_outcomes((home, home_win), draw, (away, away_win))
+        edge = outcomes[0]["probability"] - outcomes[1]["probability"] if len(outcomes) > 1 else None
+        if not outcomes:
+            return provider_stub("sportmonks", "Sportmonks", True, "Sportmonks did not return a 1X2 market.")
+
+        return {
+            "id": "sportmonks",
+            "name": "Sportmonks",
+            "configured": True,
+            "available": True,
+            "homeWin": home_win,
+            "draw": draw,
+            "awayWin": away_win,
+            "pick": outcomes[0]["label"],
+            "confidence": confidence_label(edge),
+            "message": "",
+            "market": ((winner_market or {}).get("type") or {}).get("name") or "1X2",
+        }
+
+    return cached_loader(cache_key, MATCH_ODDS_CACHE_SECONDS, loader)
+
+
 def match_key(home, away):
     return " v ".join(sorted([canonical_team_name(home), canonical_team_name(away)]))
 
@@ -409,7 +629,12 @@ def canonical_team_name(name):
         "côte d’ivoire": "cote divoire",
         "curaçao": "curacao",
         "bosnia-herzegovina": "bosnia and herzegovina",
-        "south korea": "korea republic",
+        "cape verde islands": "cape verde",
+        "congo dr": "dr congo",
+        "democratic republic of congo": "dr congo",
+        "drc": "dr congo",
+        "south korea": "south korea",
+        "korea republic": "south korea",
     }
     normalized = (
         str(name or "")
@@ -422,6 +647,80 @@ def canonical_team_name(name):
     )
     normalized = aliases.get(normalized, normalized)
     return "".join(char for char in normalized if char.isalnum() or char.isspace()).strip()
+
+
+def confidence_label(edge):
+    if edge is None:
+        return "pending"
+    if edge >= 15:
+        return "strong"
+    if edge >= 7:
+        return "balanced"
+    return "tight"
+
+
+def average_probability(values):
+    numbers = [value for value in values if isinstance(value, (int, float))]
+    if not numbers:
+        return None
+    return sum(numbers) / len(numbers)
+
+
+def sorted_outcomes(home, draw, away):
+    items = [
+        {"key": "home", "label": home[0], "probability": home[1]},
+        {"key": "draw", "label": "Draw", "probability": draw},
+        {"key": "away", "label": away[0], "probability": away[1]},
+    ]
+    items = [item for item in items if isinstance(item["probability"], (int, float))]
+    return sorted(items, key=lambda item: item["probability"], reverse=True)
+
+
+def consensus_from_providers(home, away, providers):
+    available = [provider for provider in providers if provider.get("available")]
+    home_win = average_probability([provider.get("homeWin") for provider in available])
+    draw = average_probability([provider.get("draw") for provider in available])
+    away_win = average_probability([provider.get("awayWin") for provider in available])
+    outcomes = sorted_outcomes((home, home_win), draw, (away, away_win))
+    pick = outcomes[0]["label"] if outcomes else None
+    edge = outcomes[0]["probability"] - outcomes[1]["probability"] if len(outcomes) > 1 else None
+
+    picks = [provider.get("pick") for provider in available if provider.get("pick")]
+    if not picks:
+        agreement = "pending"
+    elif len(set(picks)) == 1:
+        agreement = "aligned"
+    elif len(set(picks)) < len(picks):
+        agreement = "partial"
+    else:
+        agreement = "split"
+
+    return {
+        "pick": pick,
+        "confidence": confidence_label(edge),
+        "agreement": agreement,
+        "providerCount": len(available),
+        "probabilities": {
+            "homeWin": round(home_win, 1) if isinstance(home_win, (int, float)) else None,
+            "draw": round(draw, 1) if isinstance(draw, (int, float)) else None,
+            "awayWin": round(away_win, 1) if isinstance(away_win, (int, float)) else None,
+        },
+    }
+
+
+def provider_stub(provider_id, name, configured, message):
+    return {
+        "id": provider_id,
+        "name": name,
+        "configured": configured,
+        "available": False,
+        "homeWin": None,
+        "draw": None,
+        "awayWin": None,
+        "pick": None,
+        "confidence": "pending",
+        "message": message,
+    }
 
 
 WORLD_CUP_GROUPS = [
@@ -532,6 +831,7 @@ def sample_dashboard():
                 "status": "Upcoming",
                 "source": "football-data.org fixture",
                 "predictionStatus": "Configure ODDS_API_KEY or Sportmonks Predictions to show real probabilities.",
+                "eloPrediction": sample_elo_prediction("Mexico", "South Africa", 1730, 1564, 15, 57),
             },
             {
                 "match": "Canada vs Qatar",
@@ -543,6 +843,7 @@ def sample_dashboard():
                 "status": "Upcoming",
                 "source": "football-data.org fixture",
                 "predictionStatus": "Configure ODDS_API_KEY or Sportmonks Predictions to show real probabilities.",
+                "eloPrediction": sample_elo_prediction("Canada", "Qatar", 1722, 1588, 17, 51),
             },
         ],
         "championOdds": [
@@ -555,7 +856,161 @@ def sample_dashboard():
             {"team": "Germany", "odds": 11.0, "source": "Power Rank"},
             {"team": "Netherlands", "odds": 13.0, "source": "Power Rank"},
         ],
+        "news": fallback_news_links(),
     }
+
+
+def sample_elo_prediction(home, away, home_rating, away_rating, home_rank, away_rank):
+    home_expected = 1 / (1 + pow(10, (away_rating - home_rating) / 400))
+    away_expected = 1 - home_expected
+    home_chance = round(home_expected * 100, 1)
+    away_chance = round(away_expected * 100, 1)
+    predicted_result = "home_win" if home_expected >= away_expected else "away_win"
+    predicted_winner = home if predicted_result == "home_win" else away
+    return {
+        "formula": "1 / (1 + 10^((opponent_rating - team_rating) / 400))",
+        "home": {"team": home, "code": "", "rank": home_rank, "rating": home_rating},
+        "away": {"team": away, "code": "", "rank": away_rank, "rating": away_rating},
+        "homeChance": home_chance,
+        "awayChance": away_chance,
+        "lean": predicted_winner,
+        "predictedResult": predicted_result,
+        "predictedWinner": predicted_winner,
+        "resultLabel": f"{predicted_winner} win",
+        "edge": round(abs(home_chance - away_chance), 1),
+        "ratingDiff": home_rating - away_rating,
+        "source": "World Football Elo Ratings",
+    }
+
+
+def fallback_news_links():
+    return [
+        {
+            "title": "FIFA World Cup news",
+            "source": "FIFA",
+            "url": "https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles",
+            "category": "Official",
+            "publishedAt": "",
+            "summary": "Official tournament news, announcements, host-city updates, and competition features.",
+        },
+        {
+            "title": "World Cup 2026 news search",
+            "source": "Google News",
+            "url": "https://news.google.com/search?q=FIFA%20World%20Cup%202026",
+            "category": "Latest",
+            "publishedAt": "",
+            "summary": "A live search page for current World Cup headlines from multiple publishers.",
+        },
+        {
+            "title": "AP FIFA World Cup coverage",
+            "source": "Associated Press",
+            "url": "https://apnews.com/hub/fifa-world-cup",
+            "category": "Global",
+            "publishedAt": "",
+            "summary": "Independent reporting and background coverage on World Cup teams, venues, and fixtures.",
+        },
+        {
+            "title": "BBC World Cup coverage",
+            "source": "BBC Sport",
+            "url": "https://www.bbc.com/sport/football/world-cup",
+            "category": "Global",
+            "publishedAt": "",
+            "summary": "News, analysis, and match coverage from BBC Sport.",
+        },
+    ]
+
+
+def worldcup_news_get():
+    def loader():
+        query = urllib.parse.urlencode(
+            {
+                "q": "FIFA World Cup 2026",
+                "hl": "en-US",
+                "gl": "US",
+                "ceid": "US:en",
+            }
+        )
+        url = f"https://news.google.com/rss/search?{query}"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+                "User-Agent": "WorldCupPredictionDashboard/1.0",
+            },
+        )
+
+        with urllib.request.urlopen(request, timeout=12) as response:
+            rss_xml = response.read().decode("utf-8", "ignore")
+        return parse_news_rss(rss_xml)
+
+    try:
+        items = cached_loader("news:worldcup", NEWS_CACHE_SECONDS, loader)
+    except Exception:
+        return fallback_news_links()
+
+    if not items:
+        return fallback_news_links()
+    return items
+
+
+def parse_news_rss(rss_xml):
+    root = ElementTree.fromstring(rss_xml)
+    items = []
+    for item in root.findall(".//channel/item")[:12]:
+        raw_title = clean_text(item.findtext("title"))
+        source = clean_text(item.findtext("source"))
+        title = raw_title
+        if source and raw_title.endswith(f" - {source}"):
+            title = raw_title[: -(len(source) + 3)].strip()
+
+        published_at = format_news_date(item.findtext("pubDate"))
+        summary = clean_news_summary(item.findtext("description"))
+        items.append(
+            {
+                "title": title or "World Cup news",
+                "source": source or "Google News",
+                "url": item.findtext("link") or "https://news.google.com/search?q=FIFA%20World%20Cup%202026",
+                "category": news_category(title, summary),
+                "publishedAt": published_at,
+                "summary": summary,
+            }
+        )
+    return items
+
+
+def clean_text(value):
+    return html.unescape(str(value or "")).strip()
+
+
+def clean_news_summary(value):
+    text = re.sub(r"<[^>]+>", " ", clean_text(value))
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > 180:
+        return f"{text[:177].rsplit(' ', 1)[0]}..."
+    return text
+
+
+def format_news_date(value):
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def news_category(title, summary):
+    text = f"{title} {summary}".lower()
+    if any(keyword in text for keyword in ("draw", "group", "schedule", "fixture")):
+        return "Schedule"
+    if any(keyword in text for keyword in ("qualif", "playoff", "play-off", "team", "squad", "roster")):
+        return "Teams"
+    if any(keyword in text for keyword in ("venue", "stadium", "host", "ticket", "fan")):
+        return "Host Cities"
+    if any(keyword in text for keyword in ("fifa", "official", "president")):
+        return "Official"
+    return "Latest"
 
 
 def normalized_from_sportmonks():
@@ -595,6 +1050,9 @@ def normalized_from_sportmonks():
 
     results = []
     bracket = {}
+    forecast_matches = []
+    odds_predictions = odds_api_get_match_predictions()
+    elo_ratings = elo_ratings_get()
     for schedule in schedules:
         round_data = schedule.get("round") or {}
         stage = round_data.get("stage") or schedule.get("stage") or {}
@@ -619,6 +1077,14 @@ def normalized_from_sportmonks():
                 "status": state.get("short_name") or state.get("name") or "Scheduled",
                 "winner": winner_name(home, away),
             }
+            forecast_matches.append(
+                {
+                    "homeTeam": {"name": home_name},
+                    "awayTeam": {"name": away_name},
+                    "utcDate": fixture.get("starting_at"),
+                    "status": state.get("short_name") or state.get("name") or "SCHEDULED",
+                }
+            )
 
             if "final" in stage_label.lower() or "round" in stage_label.lower() or "quarter" in stage_label.lower() or "semi" in stage_label.lower():
                 bracket.setdefault(stage_label, []).append(match)
@@ -632,8 +1098,9 @@ def normalized_from_sportmonks():
         "groups": [{"name": key, "teams": value} for key, value in groups.items()],
         "results": results[:20],
         "bracket": [{"round": key, "matches": value} for key, value in bracket.items()],
-        "forecasts": sample_dashboard()["forecasts"],
+        "forecasts": build_forecasts_from_matches(forecast_matches, odds_predictions, None, elo_ratings),
         "championOdds": odds_api_get_champion() or sample_dashboard()["championOdds"],
+        "news": worldcup_news_get(),
     }
 
 
@@ -647,9 +1114,7 @@ def normalized_from_football_data():
     standings_payload = football_data_get("/competitions/WC/standings")
     matches_payload = football_data_get("/competitions/WC/matches")
     matches = matches_payload.get("matches", [])
-    should_refresh_predictions = has_match_within_next_hour(matches)
-    odds_predictions = odds_api_get_match_predictions() if should_refresh_predictions else {}
-    sheet_predictions = google_sheet_predictions_get()
+    odds_predictions = odds_api_get_match_predictions()
     elo_ratings = elo_ratings_get()
 
     groups = []
@@ -728,8 +1193,9 @@ def normalized_from_football_data():
         "results": results[:24],
         "allMatches": all_matches,
         "bracket": [{"round": key, "matches": value} for key, value in bracket.items()] or sample_bracket(),
-        "forecasts": build_forecasts_from_matches(matches, odds_predictions, should_refresh_predictions, sheet_predictions, elo_ratings),
+        "forecasts": build_forecasts_from_matches(matches, odds_predictions, None, elo_ratings),
         "championOdds": odds_api_get_champion() or sample_dashboard()["championOdds"],
+        "news": worldcup_news_get(),
     }
 
 
@@ -742,22 +1208,9 @@ def parse_utc(value):
         return None
 
 
-def has_match_within_next_hour(matches):
-    now = datetime.now(timezone.utc)
-    window_end = now + timedelta(seconds=ONE_HOUR_SECONDS)
-    for match in matches:
-        if match.get("status") not in {"SCHEDULED", "TIMED"}:
-            continue
-        kickoff = parse_utc(match.get("utcDate"))
-        if kickoff and now <= kickoff <= window_end:
-            return True
-    return False
-
-
-def build_forecasts_from_matches(matches, odds_predictions, odds_refresh_allowed, sheet_predictions=None, elo_ratings=None):
-    sheet_predictions = sheet_predictions or {}
+def build_forecasts_from_matches(matches, odds_predictions, sheet_predictions=None, elo_ratings=None):
     elo_ratings = elo_ratings or {}
-    upcoming_statuses = {"SCHEDULED", "TIMED", "IN_PLAY", "PAUSED"}
+    upcoming_statuses = {"SCHEDULED", "TIMED", "IN_PLAY", "PAUSED", "NS", "LIVE", "HT", "1H", "2H"}
     candidate_matches = [
         match
         for match in matches
@@ -770,26 +1223,52 @@ def build_forecasts_from_matches(matches, odds_predictions, odds_refresh_allowed
         home = (match.get("homeTeam") or {}).get("name") or "TBD"
         away = (match.get("awayTeam") or {}).get("name") or "TBD"
         odds = odds_predictions.get(match_key(home, away), {})
-        sheet_prediction = sheet_predictions.get(match_key(home, away))
+        sportmonks_prediction = sportmonks_prediction_for_match(home, away, match.get("utcDate"))
+        api_football_prediction = api_football_prediction_for_match(home, away, match.get("utcDate"))
         elo_prediction = elo_prediction_for_match(home, away, elo_ratings)
+        odds_provider = provider_stub(
+            "the-odds-api",
+            "The Odds API",
+            bool(os.environ.get("ODDS_API_KEY")),
+            "The Odds API did not return a matching h2h market for this fixture." if os.environ.get("ODDS_API_KEY") else "ODDS_API_KEY is not configured.",
+        )
 
         home_win = odds.get(home)
         away_win = odds.get(away)
         draw = odds.get("Draw")
+        if any(value is not None for value in (home_win, draw, away_win)):
+            outcomes = sorted_outcomes((home, home_win), draw, (away, away_win))
+            edge = outcomes[0]["probability"] - outcomes[1]["probability"] if len(outcomes) > 1 else None
+            odds_provider = {
+                "id": "the-odds-api",
+                "name": "The Odds API",
+                "configured": True,
+                "available": True,
+                "homeWin": round(home_win, 1) if home_win is not None else None,
+                "draw": round(draw, 1) if draw is not None else None,
+                "awayWin": round(away_win, 1) if away_win is not None else None,
+                "pick": outcomes[0]["label"] if outcomes else None,
+                "confidence": confidence_label(edge),
+                "message": "",
+            }
+
+        providers = [sportmonks_prediction, api_football_prediction, odds_provider]
+        consensus = consensus_from_providers(home, away, providers)
 
         forecasts.append(
             {
                 "match": f"{home} vs {away}",
                 "home": home,
                 "away": away,
-                "homeWin": round(home_win, 1) if home_win is not None else None,
-                "draw": round(draw, 1) if draw is not None else None,
-                "awayWin": round(away_win, 1) if away_win is not None else None,
+                "homeWin": consensus["probabilities"]["homeWin"],
+                "draw": consensus["probabilities"]["draw"],
+                "awayWin": consensus["probabilities"]["awayWin"],
                 "kickoff": match.get("utcDate"),
                 "status": match.get("status", "SCHEDULED"),
-                "source": forecast_source(odds, sheet_prediction),
-                "predictionStatus": prediction_status_for_match(match, odds, odds_refresh_allowed),
-                "sheetPrediction": sheet_prediction,
+                "source": " + ".join([provider["name"] for provider in providers if provider.get("available")]) or "fixture",
+                "predictionStatus": prediction_status_for_match(match, providers),
+                "providerForecasts": providers,
+                "consensus": consensus,
                 "eloPrediction": elo_prediction,
             }
         )
@@ -805,39 +1284,51 @@ def elo_prediction_for_match(home, away, elo_ratings):
 
     home_expected = 1 / (1 + pow(10, (away_elo["rating"] - home_elo["rating"]) / 400))
     away_expected = 1 - home_expected
+    home_chance = round(home_expected * 100, 1)
+    away_chance = round(away_expected * 100, 1)
+    if home_expected > away_expected:
+        predicted_result = "home_win"
+        predicted_winner = home
+        result_label = f"{home} win"
+    elif away_expected > home_expected:
+        predicted_result = "away_win"
+        predicted_winner = away
+        result_label = f"{away} win"
+    else:
+        predicted_result = "draw"
+        predicted_winner = "Draw"
+        result_label = "Draw"
+
     return {
         "formula": "1 / (1 + 10^((opponent_rating - team_rating) / 400))",
         "home": home_elo,
         "away": away_elo,
-        "homeChance": round(home_expected * 100, 1),
-        "awayChance": round(away_expected * 100, 1),
+        "homeChance": home_chance,
+        "awayChance": away_chance,
         "lean": home if home_expected >= away_expected else away,
+        "predictedResult": predicted_result,
+        "predictedWinner": predicted_winner,
+        "resultLabel": result_label,
+        "edge": round(abs(home_chance - away_chance), 1),
         "ratingDiff": home_elo["rating"] - away_elo["rating"],
         "source": "World Football Elo Ratings",
     }
 
 
-def forecast_source(odds, sheet_prediction):
-    if odds and sheet_prediction:
-        return "Google Sheet + The Odds API"
-    if sheet_prediction:
-        return "Google Sheet MASTER_ODDS"
-    if odds:
-        return "The Odds API h2h market"
-    return "football-data.org fixture"
-
-
-def prediction_status_for_match(match, odds, odds_refresh_allowed):
-    if odds:
+def prediction_status_for_match(match, providers):
+    available = [provider for provider in providers if provider.get("available")]
+    if available:
         return ""
-    kickoff = parse_utc(match.get("utcDate"))
-    if not os.environ.get("ODDS_API_KEY"):
-        return "Add ODDS_API_KEY to show real probabilities."
-    if not odds_refresh_allowed:
-        if kickoff:
-            return "Odds refresh is limited to one hour before kickoff to protect the 500/month quota."
-        return "Odds refresh is limited until kickoff time is available."
-    return "Odds provider did not return a matching market for this fixture."
+
+    missing = [provider["name"] for provider in providers if not provider.get("configured")]
+    if missing:
+        return f"Configure {', '.join(missing)} to show multi-source probabilities."
+
+    unavailable = [provider.get("message") for provider in providers if provider.get("message")]
+    if unavailable:
+        return unavailable[0]
+
+    return "Prediction providers did not return a matching market for this fixture."
 
 
 def fixture_score(fixture, home, away):
@@ -902,6 +1393,20 @@ def refresh_elo_payload():
     }
 
 
+def refresh_odds_payload():
+    cache_delete_prefix("odds:")
+    cache_delete_prefix("dashboard")
+    match_predictions = odds_api_get_match_predictions()
+    champion_odds = odds_api_get_champion()
+    return {
+        "ok": True,
+        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "matches": len(match_predictions),
+        "championOdds": len(champion_odds),
+        "message": "Odds refreshed from The Odds API.",
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_common_headers(self):
         self.send_header("Cache-Control", "no-store")
@@ -951,6 +1456,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/refresh-elo":
             self.send_json(refresh_elo_payload())
+            return
+
+        if path == "/api/refresh-odds":
+            self.send_json(refresh_odds_payload())
             return
 
         if path == "/":

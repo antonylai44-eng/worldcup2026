@@ -19,9 +19,17 @@ export const env = {
     baseUrl: process.env.SPORTMONKS_BASE_URL ?? "https://api.sportmonks.com/v3/football",
     worldCupSeasonId: process.env.SPORTMONKS_WORLD_CUP_SEASON_ID ?? ""
   },
+  apiFootball: {
+    key: process.env.API_FOOTBALL_KEY ?? "",
+    baseUrl: process.env.API_FOOTBALL_BASE_URL ?? "https://v3.football.api-sports.io",
+    host: process.env.API_FOOTBALL_HOST ?? "",
+    worldCupLeagueId: process.env.API_FOOTBALL_WORLD_CUP_LEAGUE_ID ?? "",
+    season: process.env.API_FOOTBALL_SEASON ?? ""
+  },
   oddsApi: {
     key: process.env.ODDS_API_KEY ?? "",
     baseUrl: process.env.ODDS_API_BASE_URL ?? "https://api.the-odds-api.com/v4",
+    matchSportKey: process.env.ODDS_API_MATCH_SPORT_KEY ?? "soccer_fifa_world_cup",
     worldCupOutrightSportKey:
       process.env.ODDS_API_WORLD_CUP_OUTRIGHT_SPORT_KEY ?? "soccer_fifa_world_cup_winner",
     regions: process.env.ODDS_API_REGIONS ?? "us,uk,eu"

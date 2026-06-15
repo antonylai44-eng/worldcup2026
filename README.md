@@ -10,7 +10,7 @@
 瀏覽器
   |
   | 讀取 public/index.html、public/styles.css、public/app.js
-  | 呼叫 /api/dashboard、/api/refresh-elo
+  | 呼叫 /api/dashboard、/api/refresh-elo、/api/refresh-odds
   v
 local_server.py
   - 提供靜態網頁
@@ -101,11 +101,12 @@ cp .env.example .env
 
 - `GET /api/dashboard`：前端主要資料來源。
 - `GET /api/refresh-elo`：手動清除 Elo/dashboard 快取並重新讀取 Elo。
+- `GET /api/refresh-odds`：手動清除 Odds/dashboard 快取並重新讀取 The Odds API。
 
 ## 資料來源與快取
 
 - football-data.org：賽程、賽果、積分榜，快取 12 小時。
-- The Odds API：冠軍賠率快取 24 小時；賽事賠率只在開賽前一小時內更新，以保護免費 quota。
+- The Odds API：冠軍賠率快取 24 小時；賽事賠率每 12 小時更新一次，以平衡即時性與免費 quota。
 - Google Sheet CSV：快取到下一個香港時間上午 11:00。
 - World Football Elo：快取 12 小時。
 
