@@ -74,8 +74,7 @@ body {
 }
 
 .hero-copy,
-.status-box,
-.hero-art {
+.status-box {
   position: relative;
   z-index: 1;
 }
@@ -155,89 +154,6 @@ h2 {
   display: block;
   margin-top: 5px;
   font-size: 16px;
-}
-
-.hero-art {
-  position: absolute;
-  right: 50px;
-  bottom: 24px;
-  width: 180px;
-  height: 170px;
-}
-
-.trophy-shape {
-  position: absolute;
-  right: 20px;
-  bottom: 18px;
-  width: 86px;
-  height: 112px;
-  border-radius: 42px 42px 18px 18px;
-  background: linear-gradient(160deg, #ffe27a, #f5ad1b 58%, #df7f13);
-  box-shadow: inset -12px -12px 24px rgba(130, 69, 0, 0.22), 0 18px 24px rgba(0, 0, 0, 0.24);
-}
-
-.trophy-shape::before,
-.trophy-shape::after {
-  position: absolute;
-  top: 18px;
-  width: 42px;
-  height: 48px;
-  border: 10px solid #f7c948;
-  border-radius: 50%;
-  content: "";
-}
-
-.trophy-shape::before {
-  left: -36px;
-}
-
-.trophy-shape::after {
-  right: -36px;
-}
-
-.ball-shape {
-  position: absolute;
-  left: 0;
-  bottom: 2px;
-  width: 72px;
-  height: 72px;
-  border: 4px solid rgba(255, 255, 255, 0.92);
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 50% 50%, #15211e 0 10px, transparent 11px),
-    conic-gradient(from 20deg, #ffffff, #dff6ee, #ffffff, #dff6ee, #ffffff);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.25);
-}
-
-.ball-shape span,
-.ball-shape::before,
-.ball-shape::after {
-  position: absolute;
-  background: var(--ink);
-  content: "";
-}
-
-.ball-shape::before {
-  width: 28px;
-  height: 4px;
-  top: 33px;
-  left: 8px;
-  transform: rotate(-26deg);
-}
-
-.ball-shape::after {
-  width: 26px;
-  height: 4px;
-  top: 33px;
-  right: 8px;
-  transform: rotate(26deg);
-}
-
-.ball-shape span {
-  width: 4px;
-  height: 25px;
-  top: 12px;
-  left: 34px;
 }
 
 .summary-strip {
@@ -942,10 +858,6 @@ th.number {
     grid-template-columns: 1fr;
     min-height: 0;
     padding: 24px;
-  }
-
-  .hero-art {
-    display: none;
   }
 
   .status-box {
